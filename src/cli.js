@@ -6,6 +6,8 @@ const path = require("path");
 const cp = require("child_process");
 
 const DATA_DIR = path.join(process.cwd(), ".codex-recovery");
+const GLOBAL_DATA_DIR = path.join(os.homedir(), ".codex-recovery");
+const SUPABASE_CONFIG_FILE = path.join(GLOBAL_DATA_DIR, "supabase.json");
 const CHECKPOINT_FILE = path.join(DATA_DIR, "last-checkpoint.json");
 const RESUME_FILE = path.join(DATA_DIR, "resume.md");
 const SNAPSHOT_DIR = path.join(DATA_DIR, "snapshots");
@@ -151,13 +153,139 @@ function writeJson(filePath, data) {
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf8");
 }
 
-function readCheckpoint() {
-  if (!fs.existsSync(CHECKPOINT_FILE)) return null;
+function readJson(filePath) {
+  if (!fs.existsSync(filePath)) return null;
   try {
-    return JSON.parse(fs.readFileSync(CHECKPOINT_FILE, "utf8"));
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
   } catch {
     return null;
   }
+}
+
+function readSupabaseConfig() {
+  const envUrl = process.env.SUPABASE_URL;
+  const envKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY;
+  if (envUrl && envKey) {
+    return {
+      url: envUrl.replace(/\/+$/, ""),
+      key: envKey,
+      source: "environment"
+    };
+  }
+
+  const config = readJson(SUPABASE_CONFIG_FILE);
+  if (!config || !config.url || !config.key) return null;
+  return {
+    url: String(config.url).replace(/\/+$/, ""),
+    key: String(config.key),
+    source: SUPABASE_CONFIG_FILE
+  };
+}
+
+function supabaseHeaders(config, extra = {}) {
+  return {
+    apikey: config.key,
+    Authorization: `Bearer ${config.key}`,
+    "Content-Type": "application/json",
+    ...extra
+  };
+}
+
+async function supabaseRequest(config, table, options = {}) {
+  const response = await fetch(`${config.url}/rest/v1/${table}${options.query || ""}`, {
+    method: options.method || "POST",
+    headers: supabaseHeaders(config, options.headers),
+    body: options.body === undefined ? undefined : JSON.stringify(options.body)
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Supabase ${table} ${response.status}: ${body}`);
+  }
+
+  const text = await response.text();
+  return text ? JSON.parse(text) : null;
+}
+
+function currentDeviceId() {
+  return os.hostname().toLowerCase();
+}
+
+async function uploadBackupToSupabase(snapshot, backupFile) {
+  const config = readSupabaseConfig();
+  if (!config) {
+    return {
+      uploaded: false,
+      reason: "Supabase is not configured."
+    };
+  }
+
+  const deviceId = currentDeviceId();
+  await supabaseRequest(config, "devices", {
+    query: "?on_conflict=device_id",
+    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: [
+      {
+        device_id: deviceId,
+        hostname: os.hostname(),
+        platform: os.platform(),
+        last_seen_at: nowIso(),
+        snapshot
+      }
+    ]
+  });
+
+  await supabaseRequest(config, "backups", {
+    headers: { Prefer: "return=minimal" },
+    body: [
+      {
+        device_id: deviceId,
+        workspace: process.cwd(),
+        backup_file: backupFile,
+        snapshot
+      }
+    ]
+  });
+
+  const checkpoint = readCheckpoint();
+  if (checkpoint) {
+    await uploadCheckpointToSupabase(checkpoint, config);
+  }
+
+  return {
+    uploaded: true,
+    source: config.source
+  };
+}
+
+async function uploadCheckpointToSupabase(checkpoint, existingConfig) {
+  const config = existingConfig || readSupabaseConfig();
+  if (!config) {
+    return {
+      uploaded: false,
+      reason: "Supabase is not configured."
+    };
+  }
+
+  await supabaseRequest(config, "checkpoints", {
+    headers: { Prefer: "return=minimal" },
+    body: [
+      {
+        device_id: currentDeviceId(),
+        workspace: checkpoint.workspace || process.cwd(),
+        checkpoint
+      }
+    ]
+  });
+
+  return {
+    uploaded: true,
+    source: config.source
+  };
+}
+
+function readCheckpoint() {
+  return readJson(CHECKPOINT_FILE);
 }
 
 function createAutomaticCheckpoint(fields = {}) {
@@ -240,7 +368,7 @@ function cmdSnapshot() {
   console.log(`环境清单已生成：${filePath}`);
 }
 
-function cmdCheckpoint() {
+async function cmdCheckpoint() {
   const checkpoint = createAutomaticCheckpoint({
     task: process.argv.slice(3).join(" ") || undefined
   });
@@ -248,6 +376,13 @@ function cmdCheckpoint() {
   fs.writeFileSync(RESUME_FILE, renderResume(checkpoint), "utf8");
   console.log(`任务断点已保存：${CHECKPOINT_FILE}`);
   console.log(`恢复说明已生成：${RESUME_FILE}`);
+
+  const upload = await uploadCheckpointToSupabase(checkpoint);
+  if (upload.uploaded) {
+    console.log("任务断点已上传到 Supabase。");
+  } else {
+    console.log("Supabase 未配置，任务断点仅保存在本地。");
+  }
 }
 
 function cmdLast() {
@@ -281,11 +416,10 @@ function cmdResume() {
   console.log("cd D:\\Codex\\Windows\\workspace; codex");
 }
 
-function copyConfigBackup(snapshotFile) {
+function copyConfigBackup(snapshot, snapshotFile) {
   ensureDir(BACKUP_DIR);
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const backupFile = path.join(BACKUP_DIR, `backup-${stamp}.json`);
-  const snapshot = collectSnapshot();
   snapshot.backup = {
     type: "local",
     supabase_uploaded: false,
@@ -296,16 +430,22 @@ function copyConfigBackup(snapshotFile) {
   return backupFile;
 }
 
-function cmdBackup() {
+async function cmdBackup() {
   ensureDir(SNAPSHOT_DIR);
   const snapshot = collectSnapshot();
   const snapshotFile = path.join(SNAPSHOT_DIR, `snapshot-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
   writeJson(snapshotFile, snapshot);
-  const backupFile = copyConfigBackup(snapshotFile);
+  const backupFile = copyConfigBackup(snapshot, snapshotFile);
 
   console.log(`本地环境清单已保存：${snapshotFile}`);
   console.log(`本地备份包已保存：${backupFile}`);
-  console.log("Supabase 上传尚未配置。配置好 Supabase URL 和 token 后，再启用云端上传。");
+
+  const upload = await uploadBackupToSupabase(snapshot, backupFile);
+  if (upload.uploaded) {
+    console.log("备份已上传到 Supabase。");
+  } else {
+    console.log("Supabase 未配置，本次只保存到本地。");
+  }
 }
 
 function cmdRestorePlan() {
@@ -369,21 +509,35 @@ function cmdClean() {
   console.log(`删除备份：${removedBackups}`);
 }
 
-function cmdHelp() {
-  printSimpleCommands();
-  console.log("内部命令：snapshot, backup, checkpoint, last, resume, restore-plan, restore, clean");
+function cmdSupabaseStatus() {
+  const config = readSupabaseConfig();
+  if (!config) {
+    console.log("Supabase 未配置。");
+    console.log(`配置文件位置：${SUPABASE_CONFIG_FILE}`);
+    return;
+  }
+
+  console.log("Supabase 已配置。");
+  console.log(`URL：${config.url}`);
+  console.log(`来源：${config.source}`);
+  console.log("密钥：已隐藏");
 }
 
-try {
+function cmdHelp() {
+  printSimpleCommands();
+  console.log("内部命令：snapshot, backup, checkpoint, last, resume, restore-plan, restore, clean, supabase-status");
+}
+
+async function main() {
   switch (command) {
     case "snapshot":
       cmdSnapshot();
       break;
     case "backup":
-      cmdBackup();
+      await cmdBackup();
       break;
     case "checkpoint":
-      cmdCheckpoint();
+      await cmdCheckpoint();
       break;
     case "last":
       cmdLast();
@@ -400,6 +554,9 @@ try {
     case "clean":
       cmdClean();
       break;
+    case "supabase-status":
+      cmdSupabaseStatus();
+      break;
     case "help":
     case "--help":
     case "-h":
@@ -410,7 +567,9 @@ try {
       cmdHelp();
       process.exitCode = 1;
   }
-} catch (error) {
+}
+
+main().catch((error) => {
   console.error(`codex-recovery 执行失败：${error.message}`);
   process.exitCode = 1;
-}
+});
