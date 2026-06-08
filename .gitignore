@@ -1,0 +1,6 @@
+node_modules/
+npm-debug.log*
+
+# Runtime recovery data. Keep this local unless explicitly exporting a backup.
+.codex-recovery/
+

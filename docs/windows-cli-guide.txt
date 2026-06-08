@@ -1,0 +1,18 @@
+Codex Recovery Windows CLI 指南
+
+原则：
+用户只需要记住 3 条命令，复杂流程由工具和 Codex 完成。
+
+平时开始工作：
+cd D:\Codex\Windows\workspace; codex
+
+任务中断后：
+cd D:\Codex\Windows\workspace; codex-recovery resume
+
+系统重装或换新电脑后：
+iwr https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/codex-recovery/main/install.ps1 -OutFile install.ps1
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+
+第一阶段范围：
+只做 Windows CLI 本地恢复、环境清单、配置备份、任务断点和恢复入口。
+
