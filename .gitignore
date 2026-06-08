@@ -4,3 +4,5 @@ npm-debug.log*
 # Runtime recovery data. Keep this local unless explicitly exporting a backup.
 .codex-recovery/
 
+# Local secret config can also live here during manual testing.
+supabase.json
