@@ -207,6 +207,13 @@ async function supabaseRequest(config, table, options = {}) {
   return text ? JSON.parse(text) : null;
 }
 
+async function supabaseGet(config, table, query) {
+  return supabaseRequest(config, table, {
+    method: "GET",
+    query
+  });
+}
+
 function currentDeviceId() {
   return os.hostname().toLowerCase();
 }
@@ -394,6 +401,41 @@ function cmdLast() {
   console.log(renderResume(checkpoint));
 }
 
+async function fetchRemoteRestoreData() {
+  const config = readSupabaseConfig();
+  if (!config) {
+    return {
+      configured: false,
+      devices: [],
+      backups: [],
+      checkpoints: []
+    };
+  }
+
+  const devices = await supabaseGet(
+    config,
+    "devices",
+    "?select=device_id,hostname,platform,last_seen_at&order=last_seen_at.desc&limit=10"
+  );
+  const backups = await supabaseGet(
+    config,
+    "backups",
+    "?select=id,device_id,workspace,backup_file,created_at&order=created_at.desc&limit=10"
+  );
+  const checkpoints = await supabaseGet(
+    config,
+    "checkpoints",
+    "?select=id,device_id,workspace,checkpoint,created_at&order=created_at.desc&limit=5"
+  );
+
+  return {
+    configured: true,
+    devices: devices || [],
+    backups: backups || [],
+    checkpoints: checkpoints || []
+  };
+}
+
 function cmdResume() {
   ensureDir(DATA_DIR);
   let checkpoint = readCheckpoint();
@@ -448,8 +490,48 @@ async function cmdBackup() {
   }
 }
 
-function cmdRestorePlan() {
+function renderRemoteRestoreSection(remote) {
+  if (!remote.configured) {
+    return `## Supabase 云端记录
+
+Supabase 尚未配置。当前只能使用本地断点和本地备份。
+`;
+  }
+
+  const devices = remote.devices.length
+    ? remote.devices.map((device) => `- ${device.device_id} / ${device.hostname} / ${device.last_seen_at}`).join("\n")
+    : "无设备记录";
+  const backups = remote.backups.length
+    ? remote.backups.map((backup) => `- ${backup.device_id} / ${backup.workspace || "无工作区"} / ${backup.created_at}`).join("\n")
+    : "无备份记录";
+  const checkpoints = remote.checkpoints.length
+    ? remote.checkpoints
+        .map((item) => {
+          const checkpoint = item.checkpoint || {};
+          return `- ${item.device_id} / ${checkpoint.task || "未记录任务"} / ${item.created_at}`;
+        })
+        .join("\n")
+    : "无断点记录";
+
+  return `## Supabase 云端记录
+
+### 旧设备
+
+${devices}
+
+### 最近备份
+
+${backups}
+
+### 最近任务断点
+
+${checkpoints}
+`;
+}
+
+async function cmdRestorePlan() {
   const checkpoint = readCheckpoint();
+  const remote = await fetchRemoteRestoreData();
   const plan = `# Codex Recovery Restore Plan
 
 生成时间：${nowIso()}
@@ -470,6 +552,8 @@ function cmdRestorePlan() {
 3. 显示最近任务断点。
 4. 用户确认后继续 Codex 工作。
 
+${renderRemoteRestoreSection(remote)}
+
 ## 最近任务断点
 
 ${checkpoint ? renderResume(checkpoint) : "暂无本地任务断点。"}
@@ -482,7 +566,7 @@ ${checkpoint ? renderResume(checkpoint) : "暂无本地任务断点。"}
 
 function cmdRestore() {
   console.log("第一版 restore 只生成和显示恢复计划，不会静默安装或覆盖配置。");
-  cmdRestorePlan();
+  return cmdRestorePlan();
 }
 
 function removeOldFiles(dir, keepLatest) {
@@ -546,10 +630,10 @@ async function main() {
       cmdResume();
       break;
     case "restore-plan":
-      cmdRestorePlan();
+      await cmdRestorePlan();
       break;
     case "restore":
-      cmdRestore();
+      await cmdRestore();
       break;
     case "clean":
       cmdClean();
