@@ -46,6 +46,14 @@ codex-recovery clean
 
 运行时数据会保存在 `.codex-recovery/`，这个目录只用于本地恢复，默认不会提交到 Git。
 
+Supabase 凭据保存在用户目录：
+
+```text
+%USERPROFILE%\.codex-recovery\supabase.json
+```
+
+这个文件只保存在本机，不提交到 Git。
+
 ## 第一版边界
 
 - 默认不上传完整聊天记录
@@ -54,3 +62,19 @@ codex-recovery clean
 - 不做 Codex App
 - 不静默安装或覆盖配置
 - 恢复前必须显示计划
+
+## Supabase
+
+第一版使用 Supabase 保存设备、备份和任务断点。先在 Supabase SQL Editor 运行：
+
+```text
+docs/supabase_schema.sql
+```
+
+然后在本机运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\configure-supabase.ps1
+```
+
+后续 `codex-recovery backup` 会自动上传；没有配置 Supabase 时只保存到本地。
