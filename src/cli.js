@@ -156,7 +156,7 @@ function writeJson(filePath, data) {
 function readJson(filePath) {
   if (!fs.existsSync(filePath)) return null;
   try {
-    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+    return JSON.parse(fs.readFileSync(filePath, "utf8").replace(/^\uFEFF/, ""));
   } catch {
     return null;
   }
