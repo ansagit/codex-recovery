@@ -5,6 +5,5 @@ cd D:\Codex\Windows\workspace; codex-recovery resume
 cd D:\Codex\Windows\workspace; codex
 
 系统重装后：
-iwr https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/codex-recovery/main/install.ps1 -OutFile install.ps1
+iwr https://raw.githubusercontent.com/ansagit/codex-recovery/main/install.ps1 -OutFile install.ps1
 powershell -ExecutionPolicy Bypass -File .\install.ps1
-

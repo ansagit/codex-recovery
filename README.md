@@ -26,7 +26,7 @@ cd D:\Codex\Windows\workspace; codex-recovery resume
 系统重装 / 换电脑恢复：
 
 ```powershell
-iwr https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/codex-recovery/main/install.ps1 -OutFile install.ps1
+iwr https://raw.githubusercontent.com/ansagit/codex-recovery/main/install.ps1 -OutFile install.ps1
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
