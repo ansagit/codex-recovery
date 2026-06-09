@@ -63,16 +63,28 @@ fi
 
 echo ""
 echo "Running migration..."
-POOLER_URL="postgresql://postgres.${PROJECT_REF}:${DB_PASSWORD}@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres?sslmode=require"
-DIRECT_URL="postgresql://postgres:${DB_PASSWORD}@db.${PROJECT_REF}.supabase.co:5432/postgres?sslmode=require"
+export PGPASSWORD="$DB_PASSWORD"
+export PGSSLMODE=require
 
-if ! psql "$POOLER_URL" -v ON_ERROR_STOP=1 -f "$SQL_FILE"; then
+if ! psql \
+  --host=aws-0-ap-southeast-1.pooler.supabase.com \
+  --port=6543 \
+  --username="postgres.${PROJECT_REF}" \
+  --dbname=postgres \
+  -v ON_ERROR_STOP=1 \
+  -f "$SQL_FILE"; then
   echo ""
-  echo "Pooler connection failed. Trying direct database connection..."
-  psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f "$SQL_FILE"
+  echo "Transaction pooler failed. Trying session pooler..."
+  psql \
+    --host=aws-0-ap-southeast-1.pooler.supabase.com \
+    --port=5432 \
+    --username="postgres.${PROJECT_REF}" \
+    --dbname=postgres \
+    -v ON_ERROR_STOP=1 \
+    -f "$SQL_FILE"
 fi
 
-unset DB_PASSWORD POOLER_URL DIRECT_URL
+unset DB_PASSWORD PGPASSWORD PGSSLMODE
 
 echo ""
 echo "Migration finished."
