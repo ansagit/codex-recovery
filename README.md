@@ -86,3 +86,49 @@ powershell -ExecutionPolicy Bypass -File .\scripts\configure-supabase.ps1
 ```text
 docs/full-setup-manual.md
 ```
+
+## WSL CLI
+
+WSL CLI 和 Windows CLI 使用同一个 GitHub 项目、同一个 Supabase 项目，但不共用本地工作目录。
+
+WSL 本地目录：
+
+```text
+/mnt/d/Codex/WSL/workspace/codex-recovery
+```
+
+WSL 日常只需要记住 3 条命令：
+
+```bash
+cd /mnt/d/Codex/WSL/workspace; codex
+```
+
+```bash
+cd /mnt/d/Codex/WSL/workspace; codex-recovery resume
+```
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ansagit/codex-recovery/main/install-wsl.sh -o install-wsl.sh
+bash install-wsl.sh
+```
+
+WSL CLI 记录必须使用：
+
+```text
+profile = "wsl-cli"
+cli = "wsl-cli"
+device_id = hostname + "-wsl-cli"
+workspace = "/mnt/d/Codex/WSL/workspace"
+```
+
+如果 Supabase 是先按 Windows CLI schema 创建的，需要先在 Supabase SQL Editor 运行：
+
+```text
+docs/supabase_wsl_migration.sql
+```
+
+WSL 详细说明见：
+
+```text
+docs/wsl-cli.md
+```
