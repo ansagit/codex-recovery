@@ -66,23 +66,13 @@ echo "Running migration..."
 export PGPASSWORD="$DB_PASSWORD"
 export PGSSLMODE=require
 
-if ! psql \
-  --host=aws-0-ap-southeast-1.pooler.supabase.com \
-  --port=6543 \
+psql \
+  --host=aws-1-ap-southeast-1.pooler.supabase.com \
+  --port=5432 \
   --username="postgres.${PROJECT_REF}" \
   --dbname=postgres \
   -v ON_ERROR_STOP=1 \
-  -f "$SQL_FILE"; then
-  echo ""
-  echo "Transaction pooler failed. Trying session pooler..."
-  psql \
-    --host=aws-0-ap-southeast-1.pooler.supabase.com \
-    --port=5432 \
-    --username="postgres.${PROJECT_REF}" \
-    --dbname=postgres \
-    -v ON_ERROR_STOP=1 \
-    -f "$SQL_FILE"
-fi
+  -f "$SQL_FILE"
 
 unset DB_PASSWORD PGPASSWORD PGSSLMODE
 
