@@ -78,3 +78,11 @@ powershell -ExecutionPolicy Bypass -File .\scripts\configure-supabase.ps1
 ```
 
 后续 `codex-recovery backup` 会自动上传；没有配置 Supabase 时只保存到本地。
+
+## 完整手册
+
+新账号、新电脑完整搭建流程见：
+
+```text
+docs/full-setup-manual.md
+```
