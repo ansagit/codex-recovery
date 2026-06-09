@@ -1,0 +1,21 @@
+Codex Recovery 完整搭建操作手册
+
+推荐保存格式：
+1. full-setup-manual.md：主手册，适合放 GitHub，复制命令方便。
+2. codex_recovery_full_setup_manual.txt：纯文本备份，系统重装后可直接打开。
+3. codex_recovery_commands.txt：极简命令便签，日常只看这个。
+
+最重要的 3 条命令：
+
+平时开始工作：
+cd D:\Codex\Windows\workspace; codex
+
+任务中断后恢复：
+cd D:\Codex\Windows\workspace; codex-recovery resume
+
+系统重装 / 换电脑恢复：
+iwr https://raw.githubusercontent.com/GITHUB_USERNAME/codex-recovery/main/install.ps1 -OutFile install.ps1
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+
+详细手册见同目录 full-setup-manual.md。
+
