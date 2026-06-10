@@ -3,12 +3,16 @@
   "version": "0.1.0",
   "description": "Simple personal Codex workspace recovery helper for Windows CLI.",
   "bin": {
-    "codex-recovery": "./src/cli.js"
+    "codex-recovery": "./src/cli.js",
+    "vscode-codex": "./src/cli-vscode.js"
   },
   "scripts": {
     "check": "node ./src/cli.js snapshot",
     "resume": "node ./src/cli.js resume",
-    "clean": "node ./src/cli.js clean"
+    "clean": "node ./src/cli.js clean",
+    "vscode-check": "node ./src/cli-vscode.js snapshot",
+    "vscode-resume": "node ./src/cli-vscode.js resume",
+    "vscode-restore-plan": "node ./src/cli-vscode.js restore-plan"
   },
   "engines": {
     "node": ">=18"
