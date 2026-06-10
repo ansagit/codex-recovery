@@ -10,6 +10,8 @@ const CLI = "vscode-codex";
 const WORKSPACE_ROOT = "D:\\Codex\\VSCode";
 const DATA_DIR = path.join("D:\\Codex\\VSCode.codex-recovery");
 const DOWNLOAD_DIR = "D:\\Download";
+const GLOBAL_DATA_DIR = path.join(os.homedir(), ".codex-recovery");
+const SUPABASE_CONFIG_FILE = path.join(GLOBAL_DATA_DIR, "supabase.json");
 const CHECKPOINT_FILE = path.join(DATA_DIR, "last-checkpoint.json");
 const RESUME_FILE = path.join(DATA_DIR, "resume.md");
 const RESTORE_PLAN_FILE = path.join(DATA_DIR, "restore-plan.md");
@@ -208,6 +210,81 @@ function readJson(filePath) {
   } catch {
     return null;
   }
+}
+
+function readSupabaseConfig() {
+  const envUrl = process.env.SUPABASE_URL;
+  const envKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY;
+  if (envUrl && envKey) {
+    return {
+      url: String(envUrl).replace(/\/+$/, ""),
+      key: String(envKey),
+      source: "environment"
+    };
+  }
+
+  const config = readJson(SUPABASE_CONFIG_FILE);
+  if (!config || !config.url || !config.key) return null;
+  return {
+    url: String(config.url).replace(/\/+$/, ""),
+    key: String(config.key),
+    source: SUPABASE_CONFIG_FILE
+  };
+}
+
+function supabaseHeaders(config, extra = {}) {
+  return {
+    apikey: config.key,
+    Authorization: `Bearer ${config.key}`,
+    "Content-Type": "application/json",
+    ...extra
+  };
+}
+
+async function supabaseRequest(config, table, options = {}) {
+  const response = await fetch(`${config.url}/rest/v1/${table}${options.query || ""}`, {
+    method: options.method || "POST",
+    headers: supabaseHeaders(config, options.headers),
+    body: options.body === undefined ? undefined : JSON.stringify(options.body)
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Supabase ${table} ${response.status}: ${body}`);
+  }
+
+  const text = await response.text();
+  return text ? JSON.parse(text) : null;
+}
+
+function currentDeviceId() {
+  return os.hostname().toLowerCase();
+}
+
+async function uploadCheckpointToSupabase(checkpoint, existingConfig) {
+  const config = existingConfig || readSupabaseConfig();
+  if (!config) {
+    return {
+      uploaded: false,
+      reason: "Supabase is not configured."
+    };
+  }
+
+  await supabaseRequest(config, "checkpoints", {
+    headers: { Prefer: "return=minimal" },
+    body: [
+      {
+        device_id: currentDeviceId(),
+        workspace: WORKSPACE_ROOT,
+        checkpoint
+      }
+    ]
+  });
+
+  return {
+    uploaded: true,
+    source: config.source
+  };
 }
 
 function readCheckpoint() {
@@ -482,7 +559,42 @@ function cmdClean() {
 }
 
 function cmdSupabaseStatus() {
-  console.log("vscode-codex currently does not use Supabase configuration.");
+  const config = readSupabaseConfig();
+  if (!config) {
+    console.log("Supabase 未配置。请在环境变量或 ~/.codex-recovery/supabase.json 中设置 SUPABASE_URL 和 SUPABASE_SERVICE_ROLE_KEY。\n");
+    return;
+  }
+  console.log("Supabase 已配置。" );
+  console.log(`URL：${config.url}`);
+  console.log(`来源：${config.source}`);
+  console.log("密钥：已隐藏");
+}
+
+function cmdSupabaseSync() {
+  const config = readSupabaseConfig();
+  if (!config) {
+    console.log("Supabase 未配置。请先设置 SUPABASE_URL 和 SUPABASE_SERVICE_ROLE_KEY。" );
+    return Promise.resolve();
+  }
+
+  const checkpoint = createAutomaticCheckpoint({
+    task: "vscode-codex 第三入口已完成",
+    done: "默认恢复入口是 VS Code Codex 对话框。PowerShell 只是备用检查方式。D:\\Download 已生成中文 resume 和操作指南。",
+    todo: "继续在 VS Code Codex 对话框中恢复当前任务。",
+    last_command: "vscode-codex resume --download",
+    status: "vscode-codex 第三入口已完成",
+    next_step: "打开 VS Code Codex 对话框继续当前任务。"
+  });
+  checkpoint.breakpoint_dir = DATA_DIR;
+
+  return uploadCheckpointToSupabase(checkpoint, config)
+    .then(() => {
+      console.log("已将 vscode-codex 状态安全同步到 Supabase。" );
+    })
+    .catch((error) => {
+      console.error(`Supabase 同步失败：${error.message}`);
+      process.exitCode = 1;
+    });
 }
 
 function cmdHelp() {
@@ -500,6 +612,8 @@ VS Code Codex 任务恢复工具
   restore-plan   生成恢复计划
   restore        与 restore-plan 等效，显示恢复计划
   clean          清理旧快照和备份
+  supabase-status 显示 Supabase 配置状态
+  supabase-sync   将 vscode-codex 状态同步到 Supabase
   help           显示帮助
 
 可选参数:
@@ -533,6 +647,9 @@ function main() {
       break;
     case "supabase-status":
       cmdSupabaseStatus();
+      break;
+    case "supabase-sync":
+      cmdSupabaseSync();
       break;
     case "help":
     case "--help":
