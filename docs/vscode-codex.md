@@ -71,5 +71,13 @@ vscode-codex restore-plan --download
 1. 重新打开 VS Code。
 2. 确认已经登录 Codex 账号。
 3. 打开 VS Code 右侧 CODEX 对话框。
-4. 输入提示词继续上次任务。
+4. 输入唯一恢复提示词：`继续上次任务`。
 5. 只有在 VS Code Codex 无法打开、无法登录或无法读取上次任务时，才使用 PowerShell 或本地恢复命令作为备用方式。
+
+## “继续上次任务”读取规则
+
+- 只读取 `D:\Codex\VSCode.codex-recovery\resume.md`。
+- 如果该文件不存在，再读取 `D:\Download\vscode-codex-resume.md`。
+- 禁止读取普通 `resume.md`。
+- 禁止读取 Windows Codex CLI 或 WSL Codex CLI 的断点。
+- 如果断点文件缺少真实任务摘要，必须明确输出：`断点文件缺少真实任务摘要`。

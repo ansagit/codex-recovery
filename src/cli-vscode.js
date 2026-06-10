@@ -17,6 +17,7 @@ const RESUME_FILE = path.join(DATA_DIR, "resume.md");
 const RESTORE_PLAN_FILE = path.join(DATA_DIR, "restore-plan.md");
 const SNAPSHOT_DIR = path.join(DATA_DIR, "snapshots");
 const BACKUP_DIR = path.join(DATA_DIR, "backups");
+const DOWNLOAD_RESUME_FILE = path.join(DOWNLOAD_DIR, "vscode-codex-resume.md");
 const VS_CODE_SETTINGS_DIR = path.join(process.env.APPDATA || "", "Code", "User");
 const VS_CODE_SETTINGS_FILE = path.join(VS_CODE_SETTINGS_DIR, "settings.json");
 const VS_CODE_EXTENSIONS_FILE = path.join(VS_CODE_SETTINGS_DIR, "extensions.json");
@@ -203,6 +204,19 @@ function writeJson(filePath, data) {
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf8");
 }
 
+function writeResumeFiles(checkpoint) {
+  const resume = renderResume(checkpoint);
+  ensureDir(DATA_DIR);
+  fs.writeFileSync(RESUME_FILE, resume, "utf8");
+  try {
+    ensureDir(DOWNLOAD_DIR);
+    fs.writeFileSync(DOWNLOAD_RESUME_FILE, resume, "utf8");
+  } catch (error) {
+    // 如果 D:\Download 无法写入，不影响本地断点保存
+  }
+  return resume;
+}
+
 function readJson(filePath) {
   if (!fs.existsSync(filePath)) return null;
   try {
@@ -291,21 +305,35 @@ function readCheckpoint() {
   return readJson(CHECKPOINT_FILE);
 }
 
-function createAutomaticCheckpoint(fields = {}) {
-  const git = gitInfo();
+function createAutomaticCheckpoint(fields = {}, snapshot = null) {
+  const base = readCheckpoint() || {};
+  const source = snapshot || collectSnapshot();
   return {
     profile: PROFILE,
     cli: CLI,
     workspace: WORKSPACE_ROOT,
-    task: fields.task || "继续 VS Code Codex 工作",
-    done: fields.done || "已保存当前 VS Code Codex 工作区状态。",
-    todo: fields.todo || "检查恢复说明，然后继续 VS Code Codex 工作。",
-    last_command: fields.last_command || null,
-    status: fields.status || "checkpoint",
-    next_step: fields.next_step || "打开 VS Code Codex 并继续当前任务。",
+    task: fields.task || base.task || "继续上次 VS Code Codex 任务",
+    done: fields.done || base.done || "已完成的任务未记录，请参考前次断点摘要。",
+    paused_at: fields.paused_at || base.paused_at || "已停止在上次未完成的任务点。",
+    todo: fields.todo || base.todo || "继续当前任务并保持工作区状态同步。",
+    next_step: fields.next_step || base.next_step || "打开 VS Code Codex，继续当前任务。",
+    last_command: fields.last_command || base.last_command || process.argv.slice(2).join(" ") || "vscode-codex resume",
+    status: fields.status || base.status || "进行中",
     updated_at: nowIso(),
-    git
+    git: source.git,
+    tools: source.tools,
+    vscode: source.vscode,
+    files: source.files,
+    breakpoint_dir: DATA_DIR
   };
+}
+
+function updateCheckpoint(fields = {}) {
+  const snapshot = collectSnapshot();
+  const checkpoint = createAutomaticCheckpoint(fields, snapshot);
+  writeJson(CHECKPOINT_FILE, checkpoint);
+  const resume = writeResumeFiles(checkpoint);
+  return { checkpoint, resume };
 }
 
 function formatStatus(status) {
@@ -339,22 +367,106 @@ function renderResume(checkpoint) {
   if (extensionsStatus === "no") missing.push("工作区扩展推荐文件不存在");
 
   const canContinue = workspaceExists && codeStatus === "yes" && codexStatus === "yes" && codexExtStatus === "yes" && extensionsStatus === "yes";
-  const needsConfirmation = missing.length > 0 || codeStatus !== "yes" || codexStatus !== "yes" || codexExtStatus !== "yes" || extensionsStatus !== "yes";
-  const nextPrompt = `请继续我上次在 VS Code Codex 中断的任务。\n不要重新开始。\n请先根据当前 VS Code Codex 的上下文继续。\n如果上下文丢失，请读取本地断点记录：\nD:\\Codex\\VSCode.codex-recovery\\resume.md\n如果这个文件不存在，再读取：\nD:\\Download\\vscode-codex-resume.md\n\n如果可以继续，只告诉我下一步做什么。\n如果不能继续，只告诉我缺少什么。\n不要输出 JSON、配置清单、内部日志或专业文件内容。`;
+  const needsConfirmation = missing.length > 0 || codeStatus !== "yes" || codexStatus !== "yes" || codexExtStatus !== "yes";
 
   return `# VS Code Codex Resume
 
-是否可以继续：${canContinue ? "是" : "否"}
-
-缺少什么：
-${missing.length ? missing.map((item) => `- ${item}`).join("\n") : "无缺失"}
-
-是否需要用户确认：${needsConfirmation ? "是" : "否"}
-
-下一步在 VS Code Codex 输入什么提示词：
-
-${nextPrompt}
+上次任务：${checkpoint.task || "未记录具体任务。"}
+已完成：${checkpoint.done || "未记录已完成内容。"}
+当前进度：${checkpoint.paused_at || checkpoint.current || checkpoint.status || "未记录当前暂停点。"}
+未完成：${checkpoint.todo || "未记录待完成内容。"}
+下一步：${checkpoint.next_step || "请打开 VS Code Codex 并继续当前任务。"}
+是否需要确认：${checkpoint.confirm || (needsConfirmation ? "是" : "否")}
+更新时间：${checkpoint.updated_at || nowIso()}
 `;
+}
+
+function parseResumeContent(content) {
+  const data = {};
+  let currentKey = null;
+  const keyMap = {
+    上次任务: "task",
+    已完成: "done",
+    当前进度: "current",
+    停在: "current",
+    未完成: "todo",
+    下一步: "next_step",
+    是否需要用户确认: "confirm",
+    是否需要确认: "confirm",
+    更新时间: "updated_at"
+  };
+
+  function appendLine(key, text) {
+    if (!text) return;
+    if (!data[key]) data[key] = text;
+    else data[key] += (data[key].endsWith("\n") ? "" : "\n") + text;
+  }
+
+  for (const rawLine of String(content).split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    const headerMatch = line.match(/^(?:#{1,2}\s*)?(上次任务|已完成|当前进度|停在|未完成|下一步|是否需要用户确认|是否需要确认|更新时间)[:：]?$/);
+    if (headerMatch) {
+      currentKey = keyMap[headerMatch[1]];
+      continue;
+    }
+
+    const inlineMatch = line.match(/^(上次任务|已完成|当前进度|停在|未完成|下一步|是否需要用户确认|是否需要确认|更新时间)[:：]\s*(.*)$/);
+    if (inlineMatch) {
+      const key = keyMap[inlineMatch[1]];
+      if (key) {
+        data[key] = inlineMatch[2].trim();
+      }
+      currentKey = null;
+      continue;
+    }
+
+    if (currentKey) {
+      appendLine(currentKey, line);
+    }
+  }
+
+  if (!data.confirm) data.confirm = "否";
+  return data;
+}
+
+function hasRealResume(data) {
+  if (!data || typeof data !== "object") return false;
+  const required = ["task", "done", "current", "todo", "next_step", "confirm", "updated_at"];
+  for (const key of required) {
+    if (!data[key] || !String(data[key]).trim()) return false;
+  }
+  const placeholders = [
+    "未记录具体任务。",
+    "未记录已完成内容。",
+    "未记录当前暂停点。",
+    "未记录待完成内容。",
+    "请打开 VS Code Codex 并继续当前任务。",
+    "已完成的任务未记录",
+    "已停止在上次未完成的任务点",
+    "继续当前任务并保持工作区状态同步",
+    "打开 VS Code Codex，继续当前任务"
+  ];
+  return ![data.task, data.done, data.current, data.todo, data.next_step].some((value) => {
+    const text = String(value).trim();
+    return placeholders.some((placeholder) => text.includes(placeholder));
+  });
+}
+
+function loadVscodeResumeFile() {
+  const candidates = [RESUME_FILE, DOWNLOAD_RESUME_FILE];
+  let fallback = null;
+  for (const filePath of candidates) {
+    if (!fs.existsSync(filePath)) continue;
+    const content = safeRead(filePath);
+    if (!content) continue;
+    const parsed = parseResumeContent(content);
+    parsed.source = filePath;
+    if (hasRealResume(parsed)) return parsed;
+    fallback = parsed;
+  }
+  return fallback;
 }
 
 function renderRestorePlan(checkpoint) {
@@ -416,12 +528,7 @@ function writeRecoveryOperationGuide() {
 步骤 3：打开 VS Code 右侧的 CODEX 对话框。
 步骤 4：输入以下提示词：
 
-请继续我上次在 VS Code Codex 中断的任务。
-不要重新开始。
-请根据当前 VS Code Codex 的上下文和本地断点记录继续。
-如果能继续，只告诉我下一步做什么。
-如果不能继续，只告诉我缺少什么。
-不要输出 JSON、配置清单、内部日志或专业文件内容。
+继续上次任务
 
 步骤 5：根据 Codex 给出的下一步继续操作。
 
@@ -438,22 +545,16 @@ node .\\src\\cli-vscode.js resume --download
 function cmdSnapshot() {
   ensureDir(SNAPSHOT_DIR);
   const snapshot = collectSnapshot();
-  const filePath = path.join(SNAPSHOT_DIR, `snapshot-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
+  const filePath = path.join(SNAPSHOT_DIR, "snapshot.json");
   writeJson(filePath, snapshot);
   console.log(`本地环境快照已生成：${filePath}`);
 }
 
 function cmdCheckpoint() {
-  ensureDir(DATA_DIR);
-  const snapshot = collectSnapshot();
-  const checkpoint = createAutomaticCheckpoint({ task: process.argv.slice(3).join(" ") || undefined });
-  checkpoint.tools = snapshot.tools;
-  checkpoint.vscode = snapshot.vscode;
-  checkpoint.files = snapshot.files;
-  writeJson(CHECKPOINT_FILE, checkpoint);
-  fs.writeFileSync(RESUME_FILE, renderResume(checkpoint), "utf8");
+  const { checkpoint } = updateCheckpoint({ task: process.argv.slice(3).join(" ") || undefined });
   console.log(`任务断点已保存：${CHECKPOINT_FILE}`);
   console.log(`恢复说明已生成：${RESUME_FILE}`);
+  console.log(`固定导出文件：${DOWNLOAD_RESUME_FILE}`);
 }
 
 function cmdLast() {
@@ -466,41 +567,18 @@ function cmdLast() {
 }
 
 function cmdResume() {
-  ensureDir(DATA_DIR);
-  let checkpoint = readCheckpoint();
-  if (!checkpoint) {
-    checkpoint = createAutomaticCheckpoint({
-      status: "auto-created",
-      done: "未找到旧断点，已根据当前 VS Code Codex 工作区自动生成基础断点。",
-      todo: "检查当前工作区和 Git 状态，然后继续 VS Code Codex。",
-      next_step: "打开 VS Code 并继续当前任务。"
-    });
+  const resumeData = loadVscodeResumeFile();
+  if (!resumeData) {
+    console.log("未找到 VS Code Codex 专属断点文件，请检查 D:\\Codex\\VSCode.codex-recovery\\resume.md 或 D:\\Download\\vscode-codex-resume.md 是否存在。");
+    return;
   }
 
-  const snapshot = collectSnapshot();
-  checkpoint.tools = snapshot.tools;
-  checkpoint.vscode = snapshot.vscode;
-  checkpoint.files = snapshot.files;
-  checkpoint.git = snapshot.git;
-  checkpoint.workspace = snapshot.workspace;
-  checkpoint.updated_at = nowIso();
-
-  writeJson(CHECKPOINT_FILE, checkpoint);
-  const resume = renderResume(checkpoint);
-  fs.writeFileSync(RESUME_FILE, resume, "utf8");
-  console.log(resume);
-  console.log(`恢复说明文件：${RESUME_FILE}`);
-
-  if (options.download) {
-    const exportedResume = writeDownloadFile("vscode-codex-resume.md", resume);
-    const exportedGuide = writeRecoveryOperationGuide();
-    if (exportedResume && exportedGuide) {
-      console.log(`已覆盖文件：D:\\Download\\vscode-codex-resume.md`);
-      console.log(`已覆盖文件：D:\\Download\\vscode-codex-recovery-operation-guide.txt`);
-    } else {
-      console.log("导出到 D:\\Download 失败。请检查目录权限。" );
-    }
+  if (!hasRealResume(resumeData)) {
+    console.log("断点文件缺少真实任务摘要。");
+    return;
   }
+
+  console.log(`上次任务：\n${resumeData.task}\n\n已完成：\n${resumeData.done}\n\n当前进度：\n${resumeData.current}\n\n未完成：\n${resumeData.todo}\n\n下一步：\n${resumeData.next_step}\n\n是否需要确认：\n${resumeData.confirm}`);
 }
 
 function cmdRestorePlan() {
