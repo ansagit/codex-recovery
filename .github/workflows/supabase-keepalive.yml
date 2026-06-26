@@ -1,0 +1,38 @@
+name: Supabase Keepalive
+
+on:
+  schedule:
+    # 每 3 天自动访问一次 Supabase，避免免费项目长期无活动
+    - cron: "17 3 */3 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Ping Supabase REST API
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          set -e
+
+          if [ -z "$SUPABASE_URL" ]; then
+            echo "Missing secret: SUPABASE_URL"
+            exit 1
+          fi
+
+          if [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "Missing secret: SUPABASE_ANON_KEY"
+            exit 1
+          fi
+
+          curl -fsS "$SUPABASE_URL/rest/v1/keepalive?select=id&limit=1" \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -H "Authorization: Bearer $SUPABASE_ANON_KEY"
+
+          echo "Supabase keepalive ping succeeded."
