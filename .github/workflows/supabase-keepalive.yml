@@ -31,8 +31,22 @@ jobs:
             exit 1
           fi
 
-          curl -fsS "$SUPABASE_URL/rest/v1/keepalive?select=id&limit=1" \
-            -H "apikey: $SUPABASE_ANON_KEY" \
-            -H "Authorization: Bearer $SUPABASE_ANON_KEY"
+          echo "Pinging Supabase keepalive endpoint..."
+
+          HTTP_CODE=$(curl -sS -o /tmp/supabase_keepalive_response.txt -w "%{http_code}" \
+            "$SUPABASE_URL/rest/v1/keepalive?select=id&limit=1" \
+            -H "apikey: $SUPABASE_ANON_KEY")
+
+          echo "HTTP status: $HTTP_CODE"
+
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "Supabase keepalive ping failed."
+            echo "Response body:"
+            cat /tmp/supabase_keepalive_response.txt
+            exit 1
+          fi
+
+          echo "Response body:"
+          cat /tmp/supabase_keepalive_response.txt
 
           echo "Supabase keepalive ping succeeded."
