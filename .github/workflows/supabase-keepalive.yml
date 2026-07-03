@@ -2,8 +2,8 @@ name: Supabase Keepalive
 
 on:
   schedule:
-    # 每 3 天自动访问一次 Supabase，避免免费项目长期无活动
-    - cron: "17 3 */3 * *"
+    # 每天自动访问一次 Supabase，避免免费项目长期无活动
+    - cron: "17 3 * * *"
   workflow_dispatch:
 
 permissions:
@@ -18,6 +18,7 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          EXPECTED_PROJECT_REF: homvjbedfhegjpjegbej
         run: |
           set -e
 
@@ -31,11 +32,18 @@ jobs:
             exit 1
           fi
 
+          if [[ "$SUPABASE_URL" != *"$EXPECTED_PROJECT_REF.supabase.co"* ]]; then
+            echo "SUPABASE_URL does not match expected project ref: $EXPECTED_PROJECT_REF"
+            exit 1
+          fi
+
           echo "Pinging Supabase keepalive endpoint..."
 
-          HTTP_CODE=$(curl -sS -o /tmp/supabase_keepalive_response.txt -w "%{http_code}" \
+          HTTP_CODE=$(curl -sS --retry 3 --retry-delay 10 --max-time 30 \
+            -o /tmp/supabase_keepalive_response.txt -w "%{http_code}" \
             "$SUPABASE_URL/rest/v1/keepalive?select=id&limit=1" \
-            -H "apikey: $SUPABASE_ANON_KEY")
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -H "Authorization: Bearer $SUPABASE_ANON_KEY")
 
           echo "HTTP status: $HTTP_CODE"
 
